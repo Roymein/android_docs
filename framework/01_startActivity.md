@@ -1,4 +1,4 @@
-# startActivity 应用启动/界面启动流程（基于 frameworks/base 当前代码）
+# startActivity 应用启动/界面启动流程（基于 android-latest-release 对应的 frameworks/base android16-qpr2-release 代码）
 
 ## 你需要先记住的 5 个概念
 
@@ -285,14 +285,23 @@ Instrumentation 做了两件重要的事：
 这条链路可以按真实源码顺序拆成 9 步：
 
 1. `ContextImpl.startActivity(...)` 做入口检查，调用 `Instrumentation.execStartActivity(...)`
+   - 注释：app 端入口，检查 Intent/FLAG/用户、整理参数，并准备跨进程调用。
 2. `Instrumentation.execStartActivity(...)` 通过 `ActivityTaskManager.getService().startActivity(...)` 发起 `IActivityTaskManager` Binder
+   - 注释：把启动请求切换到 system_server，启动决策从这里开始。
 3. `ActivityTaskManagerService.startActivityAsUser(...)` 收到 Binder 请求，调用 `obtainStarter(...).execute()`
+   - 注释：system_server 侧入口，把 Binder 入参封装到 ActivityStarter.Request。
 4. `ActivityStarter.execute()` -> `executeRequest(...)`，先做 resolve、权限/BAL/拦截器、`ActivityRecord` 构建，再进入 `startActivityUnchecked(...)`
+   - 注释：这一步是启动策略核心，执行解析、权限与后台策略检查、ActivityRecord 构建。
 5. `ActivityStarter.startActivityUnchecked(...)` -> `startActivityInner(...)`，决定复用 task / 创建 task / deliverToTop，并调用 `startSpecificActivity(...)`
+   - 注释：最终调度决策，决定是否复用已有 Activity 或使用新的 task/stack。
 6. `ActivityTaskSupervisor.startSpecificActivity(...)` 根据 `WindowProcessController.hasThread()` 判断“热启动/冷启动”
+   - 注释：这是冷启动与热启动的关键分叉点。
 7. 冷启动时走 `startProcessAsync(...)` -> `ActivityManagerInternal.startProcess(...)` -> `ActivityManagerService.startProcessLocked(...)` -> `ActivityManagerService.attachApplicationLocked(...)` -> `ActivityTaskManagerService.LocalService.attachApplication(...)`
+   - 注释：未运行进程先拉起，再在 attach 后继续启动挂起的 Activity。
 8. 无论热启动还是冷启动，最终由 `ActivityTaskSupervisor.realStartActivityLocked(...)` 创建 `ClientTransaction`，加入 `LaunchActivityItem`、`ResumeActivityItem`，调用 `scheduleTransaction(...)`
+   - 注释：server 端把启动事务打包，下发给目标进程的 ActivityThread。
 9. 目标 app 进程 `ActivityThread` 收到事务并执行：`LaunchActivityItem.execute(...)` -> `ActivityThread.handleLaunchActivity(...)` -> `ActivityThread.performLaunchActivity(...)` -> `Activity.attach(...)` -> `Activity.onCreate()` -> `Activity.onStart()` -> `Activity.onResume()`
+   - 注释：目标进程真正创建 Activity 并进入前台。
 
 这就是“你在 IDE 里从上到下跳一遍”的最小可对照链路。
 

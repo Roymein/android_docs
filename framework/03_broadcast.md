@@ -1,4 +1,4 @@
-# 广播流程（sendBroadcast / sendOrderedBroadcast）（基于 frameworks/base 当前代码）
+# 广播流程（sendBroadcast / sendOrderedBroadcast）（基于 android-latest-release 对应的 frameworks/base android16-qpr2-release 代码）
 
 ## 你需要先记住的 5 个概念
 
@@ -47,14 +47,23 @@ flowchart TD
 这条链路可以按真实源码顺序拆成 9 步：
 
 1. `ContextImpl.sendBroadcast(...)` / `sendOrderedBroadcast(...)` 调用 `intent.prepareToLeaveProcess(this)`，然后通过 `ActivityManager.getService().broadcastIntentWithFeature(...)` 发起 Binder
+   - 注释：app 侧入口，整理 Intent 并把广播请求递交给 AMS。
 2. `ActivityManagerService.broadcastIntentWithFeature(...)` 收到请求，调用 `broadcastIntentLocked(...)`，构造 `BroadcastRecord` 并选择目标队列
+   - 注释：这一步把广播从 Intent 变成系统内部可调度的对象。
 3. `BroadcastQueue.processNextBroadcastLocked(...)` 取下一条可分发广播，按照 parallel / ordered 决定分发方式
+   - 注释：队列调度决定这条广播是否立即投递或等待顺序。
 4. parallel 广播执行 `deliverToRegisteredReceiverLocked(...)`，ordered 广播执行 `processCurBroadcastLocked(...)`
+   - 注释：parallel 广播可并发投递，ordered 广播需要串行推进。
 5. 对于动态接收者，系统最终走 `IIntentReceiver.performReceive(...)`；对于静态接收者，系统走 `thread.scheduleReceiver(...)`
+   - 注释：动态和静态 receiver 的系统投递通道不同。
 6. 目标 app 进程动态接收者执行 `LoadedApk.ReceiverDispatcher.InnerReceiver.performReceive(...)` -> `ReceiverDispatcher.Args.run()` -> `BroadcastReceiver.onReceive()`
+   - 注释：这是动态注册 receiver 的最终回调路径。
 7. 目标 app 进程静态接收者执行 `ActivityThread.handleReceiver(...)` -> `instantiateReceiver()` -> `receiver.onReceive()`
+   - 注释：这是 manifest 静态 receiver 的最终回调路径。
 8. 接收方执行完后通过 `finishReceiver()` / `sendFinished()` 回到 system_server，`ActivityManagerService.finishReceiver(...)` 推进广播队列
+   - 注释：ordered 广播依赖这一步推进到下一个接收者。
 9. 若某个 receiver 超时，`BroadcastQueue.broadcastTimeoutLocked(...)` 会强制推进队列，并可能通过 `AnrHelper.appNotResponding(...)` 产生 ANR
+   - 注释：超时处理是 ordered 广播稳定性的关键。
 
 这就是“你在 IDE 里从上到下跳一遍”的最小可对照链路。
 

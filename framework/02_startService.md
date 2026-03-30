@@ -1,4 +1,4 @@
-# ServiceStart 流程（startService / startForegroundService）（基于 frameworks/base 当前代码）
+# ServiceStart 流程（startService / startForegroundService）（基于 android-latest-release 对应的 frameworks/base android16-qpr2-release 代码）
 
 ## 你需要先记住的 5 个概念
 
@@ -47,14 +47,23 @@ flowchart TD
 这条链路可以按真实源码顺序拆成 9 步：
 
 1. `ContextImpl.startServiceCommon(...)` / `ContextImpl.startForegroundServiceCommon(...)` 做 `validateServiceIntent(...)`、`service.prepareToLeaveProcess(this)`，并调用 `ActivityManager.getService().startService(...)`
+   - 注释：app 侧入口，整理 Intent、URI 权限、Binder 参数，并区分普通服务与前台服务契约。
 2. `ActivityManagerService.startService(...)` 收到 Binder 请求，在 `synchronized(this)` 内调用 `mServices.startServiceLocked(...)`
+   - 注释：system_server 进入 AMS 锁范围，准备构建/查找 ServiceRecord。
 3. `ActiveServices.startServiceLocked(...)` 解析目标 `ServiceInfo`、做权限/后台启动/foreground 服务限制检查，进入 `startServiceInnerLocked(...)`
+   - 注释：判断是否允许启动，以及是否需要挂起/拒绝。
 4. `ActiveServices.bringUpServiceLocked(...)` 决定“进程已存在直接 realStartServiceLocked”还是“进程不存在先拉起并挂起 pending”
+   - 注释：这是“冷启动 or 热启动”判断点。
 5. 进程已存在时，`ActiveServices.realStartServiceLocked(...)` 调用 `thread.scheduleCreateService(...)` 并通过 `sendServiceArgsLocked(...)` 下发 `scheduleServiceArgs(...)`
+   - 注释：直接把 Service 创建和 startCommand 参数投递给目标进程。
 6. 进程不存在时，`mAm.startProcessLocked(...)` 拉起进程，等待 `ActivityManagerService.attachApplicationLocked(...)`
+   - 注释：未运行时先创建进程并挂起 ServiceRecord。
 7. `ActivityManagerService.attachApplicationLocked(...)` 调用 `ActiveServices.attachApplicationLocked(...)`，将 `mPendingServices` 里的 ServiceRecord 取出并继续 `realStartServiceLocked(...)`
+   - 注释：进程 attach 后继续完成挂起的服务启动请求。
 8. 目标 app 进程 `ActivityThread.handleCreateService(...)` 创建 Service 实例、`service.attach(...)`、`service.onCreate()`，并回 `serviceDoneExecuting(...)`
+   - 注释：目标进程真正初始化 Service 对象。
 9. 目标 app 进程 `ActivityThread.handleServiceArgs(...)` 投递 `Service.onStartCommand(...)`，执行后再回 `serviceDoneExecuting(...)`
+   - 注释：点燃 Service 的业务入口，完成启动链路。
 
 这就是“你在 IDE 里从上到下跳一遍”的最小可对照链路。
 
